@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+
+from json import loads as loadJson
+from sys import float_info
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+# Empty list for state data.
+stateData = []
+
+# Build list of state name/border JSON objects from JSON file (fileName).
+# JSON file should be line-separated list of JSON objects with "state" and "border" keys.
+	# "state" value should be a string representing the state's name.
+	# "border" value should be an array of [longitude, latitude] arrays representing clockwise vertices of the state's border. The last [longitude, latitude] array should be the same as the first.
+def getStateDataFromFile(fileName):
+	stateDataList = []
+	jsonFile = open(fileName, 'r')
+	for line in jsonFile:
+		jsonObject = loadJson(line)
+		stateDataList.append(jsonObject)
+		
+	return stateDataList
+
+# Build dictionary from name/value pairs sent in POST data.
+# If correct data is sent, dictionary should have "latitude" and "longitude" keys with corresponding numerical values.
+def getPostDict(postData):
+	postList = postData.split('&')
+	postDict = dict()
+
+	for postVar in postList:
+		nameValueList = postVar.split('=')
+		postDict[nameValueList[0]] = float(nameValueList[1])
+	
+	return postDict
+	
+# Check if point is on a line segment.
+	# (point) should be a list with two floats (an "x" value first and a "y" value second).
+	# (line) should be a list with two points.
+def isOnLineSegment(point, line):	
+	# Line segment end-points (a) and (b).
+	a,b = line
+	
+	# x and y coordinates of (a), (b), and query point (c).
+	ax,ay = a
+	bx,by = b
+	cx,cy = point
+	
+	# (a), (b), and (c) are collinear (all on same line) if the cross-product of (b-a) and (c-a) is 0.
+	crossProduct = (cy - ay) * (bx - ax) - (cx - ax) * (by - ay)
+	# (float_info.epsilon) is the tolerable difference taking into account floating point rounding error.
+	if abs(crossProduct) <= float_info.epsilon: 
+		# Check if (c) is between (a) and (b)
+		if min(ax, bx) <= cx <= max(ax, bx) and min(ay, by) <= cy <= max(ay, by):
+			return True
+		
+	return False
+
+# Check if point is in polygon or on one of its edges/vertices.
+def isInOnPolygon(point, polygon):
+	# Return True if point is on a vertex of the polygon.
+	if point in polygon:
+		return True
+
+	# Loop through all edges of the polygon. Each edge is represented as a line segment between point (p1) and point (p2).
+	inside = False # For ray casting algorithm (0 intersections = outside)
+	numVertices = len(polygon) #This value is going to be 1 larger than the "real" number of vertices since the last vertex should be a duplicate of the first vertex.
+	for i in range(numVertices-1):
+		p1 = polygon[i]
+		p2 = polygon[i+1]
+		
+		# Return True if point is on edge of polygon.
+		edge = [p1, p2]
+		if isOnLineSegment(point, edge):
+			return True
+		
+		# Check if point is within polygon using ray casting algorithm.
+		# Adapted from C function here: http://paulbourke.net/geometry/polygonmesh/index.html#insidepoly
+		x,y = point
+		p1x,p1y = p1
+		p2x,p2y = p2
+		# Check to see if ray is within horizontal bounds.
+		# Minimum check isn't inclusive in case the ray passes through a vertex. We don't want the ray to pass through the vertex twice (once when the vertex is an upper bound and once when it's a lower bound).
+		if y > min(p1y,p2y) and y <= max(p1y,p2y):
+			# Make sure ray starts before maximum vertical bound
+			if x <= max(p1x,p2x):
+				# Make sure edge isn't horizontal (don't want to divide by 0 for xIntersect).
+				if p1y != p2y:
+					# Find where ray intersects with edge.
+					xIntersect = (y-p1y)*(p2x-p1x)/(p2y-p1y)+p1x
+					# If edge is vertical (and ray starts before it, as checked above) or ray starts before where it intersects with the edge (xIntersect), then the ray has crossed an edge.
+					if p1x == p2x or x <= xIntersect:
+						# 1 intersection = inside, 2 = outside, 3 = inside, etc.
+						inside = not inside
+	return inside
+
+# Check if longitude/latitude location from longLatDict is within any of the states present in stateDataList.
+# If found, return the name of the state, otherwise return "Not found."
+def getStateName(longLatDict, stateDataList):
+	stateName="Not found"
+	
+	for stateData in stateDataList:
+		longLatPoint = [longLatDict['longitude'], longLatDict['latitude']]
+		statePolygon = stateData['border']
+		if isInOnPolygon(longLatPoint, statePolygon):
+			stateName=stateData['state']
+			break
+
+	return stateName
+
+# Extend BaseHTTPRequestHandler to make simple server that handles HEAD, GET, and POST.
+# BaseHTTPRequestHandler info: https://docs.python.org/3/library/http.server.html
+class stateServer(BaseHTTPRequestHandler):
+	# Send 200 status-code response (OK) and HTML header.
+	def _send_response_header(self):
+		self.send_response(200)
+		self.send_header('Content-type', 'text/html')
+		self.end_headers()
+	
+	# Keep server from printing log messages.
+	def log_message(self, format, *args):
+		return
+	
+	# Serve 'HEAD' requests.
+	# Return response header.
+	def do_HEAD(self):
+		self._send_response_header()
+	
+	# Serve 'GET' requests.
+	# Return web page (simple POST form for "longitude" and "latitude" data).
+	def do_GET(self):
+		self._send_response_header()
+		htmlFileStr = open('index.html', 'r')
+		htmlFileUnicode = htmlFileStr.read().encode('utf-8')
+		self.wfile.write(htmlFileUnicode)
+	
+	# Serve 'POST' requests.
+	# Take "longitude" and "latitude" variables and return the corresponding state name (if any).
+	def do_POST(self):
+		self._send_response_header()
+		
+		unicodeData = self.rfile.read(int(self.headers['Content-Length']))
+		strData = unicodeData.decode('utf-8')
+		
+		longLatDict = getPostDict(strData)
+		stateName = getStateName(longLatDict, stateData)
+		
+		response = "[\""+stateName+"\"] \n"
+		responseUnicode = response.encode('utf-8')
+		self.wfile.write(responseUnicode)
+
+# Build stateData structure and create server.
+# Server creation code adapted from: https://docs.python.org/3/library/http.server.html
+def run(server_class=HTTPServer, handler_class=stateServer):
+	# Build stateData structure once.
+	global stateData
+	stateData = getStateDataFromFile('states.json')
+	
+	# Create server.
+	server_address = ('127.0.0.1', 8080)
+	httpd = server_class(server_address, handler_class)
+	httpd.serve_forever()
+
+# Run server.
+run()
