@@ -17,14 +17,18 @@ Python 3
 
 You can either run state-server from the command line:
 
-  $ ./state-server &
-  [1] 21507
-  $ curl  -d "longitude=-77.036133&latitude=40.513799" http://localhost:8080/
-  ["Pennsylvania"]
-  $
+```
+$ ./state-server &
+[1] 21507
+$ curl  -d "longitude=-77.036133&latitude=40.513799" http://localhost:8080/
+["Pennsylvania"]
+$
+```
   
 or you can start it from the command line:
 
-  $ ./state-server
+```
+$ ./state-server
+```
   
-and test it through using a browser GUI by opening http://localhost:8080/ in a web browser.
+and test it through using a browser GUI by opening **http://localhost:8080/** in a web browser.
